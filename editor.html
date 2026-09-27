@@ -101,12 +101,16 @@
     }
 
     footer {
+      display: none;
       padding: 8px 16px;
       background-color: var(--gutter-bg);
       border-top: 1px solid var(--border);
-      display: flex;
       justify-content: flex-end;
       gap: 10px;
+    }
+
+    body.no-tg footer {
+      display: flex;
     }
 
     button {
@@ -164,6 +168,7 @@
     <div class="title" id="docTitle">Редактор</div>
     <div class="stats" id="stats">0 строк, 0 симв.</div>
   </header>
+  <div class="meta-bar" id="metaBar" style="display:none; padding: 4px 16px; background-color: #16161e; border-bottom: 1px solid var(--border); font-size: 11px; color: var(--gutter-text); gap: 12px; align-items: center;"></div>
 
   <div class="editor-container">
     <div class="line-numbers" id="lineNumbers">1</div>
@@ -179,21 +184,26 @@
 
   <script>
     const tg = window.Telegram?.WebApp;
-    if (tg) {
-      tg.ready();
-      tg.expand();
-      if (tg.MainButton) {
-        tg.MainButton.setText("💾 Сохранить");
-        tg.MainButton.show();
-        tg.MainButton.onClick(saveContent);
-        // Скрываем дублирующий HTML-футер в Telegram — используется нативный MainButton
-        const footer = document.querySelector("footer");
-        if (footer) footer.style.display = "none";
+    const isInsideTelegram = !!(tg && (tg.initData || (tg.platform && tg.platform !== "unknown")));
+
+    if (isInsideTelegram && tg) {
+      try {
+        tg.ready();
+        tg.expand();
+        if (tg.MainButton) {
+          tg.MainButton.setText("💾 Сохранить");
+          tg.MainButton.show();
+          tg.MainButton.onClick(saveContent);
+        }
+        if (tg.BackButton) {
+          tg.BackButton.show();
+          tg.BackButton.onClick(closeEditor);
+        }
+      } catch (e) {
+        console.error("TG WebApp init error:", e);
       }
-      if (tg.BackButton) {
-        tg.BackButton.show();
-        tg.BackButton.onClick(closeEditor);
-      }
+    } else {
+      document.body.classList.add("no-tg");
     }
 
     const editor = document.getElementById("editor");
@@ -208,6 +218,31 @@
       text: ""
     };
 
+    function parseData(raw) {
+      if (!raw) return null;
+      try {
+        return JSON.parse(raw);
+      } catch (e) {}
+
+      try {
+        return JSON.parse(decodeURIComponent(raw));
+      } catch (e) {}
+
+      try {
+        const cleaned = raw.replace(/ /g, "+");
+        const binary = atob(cleaned);
+        const bytes = Uint8Array.from(binary, c => c.charCodeAt(0));
+        return JSON.parse(new TextDecoder("utf-8").decode(bytes));
+      } catch (e) {}
+
+      try {
+        const cleaned = raw.replace(/ /g, "+");
+        return JSON.parse(decodeURIComponent(escape(atob(cleaned))));
+      } catch (e) {}
+
+      return null;
+    }
+
     function initData() {
       try {
         let rawData = null;
@@ -218,7 +253,7 @@
           rawData = searchParams.get("data");
         }
 
-        // 2. Фолбэк на hash #data=...
+        // 2. Фолбэк на hash #data=... или внутри фрагмента tgWebAppData
         if (!rawData && window.location.hash) {
           const hashStr = window.location.hash.substring(1);
           const hashParams = new URLSearchParams(hashStr);
@@ -228,16 +263,9 @@
         }
 
         if (rawData) {
-          try {
-            payload = JSON.parse(decodeURIComponent(rawData));
-          } catch (e1) {
-            try {
-              const cleaned = rawData.replace(/ /g, "+");
-              const decoded = decodeURIComponent(escape(atob(cleaned)));
-              payload = JSON.parse(decoded);
-            } catch (e2) {
-              console.error("Failed to parse data payload:", e1, e2);
-            }
+          const parsed = parseData(rawData);
+          if (parsed && typeof parsed === "object") {
+            payload = { ...payload, ...parsed };
           }
         }
       } catch (e) {
@@ -246,6 +274,25 @@
 
       if (payload.title) {
         docTitle.innerText = payload.title;
+      }
+      if (payload.metadata) {
+        const metaBar = document.getElementById("metaBar");
+        if (metaBar) {
+          const parts = [];
+          if (payload.metadata.direction) {
+            parts.push(`📁 ${payload.metadata.direction}`);
+          }
+          if (payload.metadata.created_at) {
+            parts.push(`📅 ${payload.metadata.created_at}`);
+          }
+          if (payload.metadata.links_count !== undefined) {
+            parts.push(`🔗 Связей: ${payload.metadata.links_count}`);
+          }
+          if (parts.length > 0) {
+            metaBar.innerHTML = parts.join("&nbsp;&nbsp;•&nbsp;&nbsp;");
+            metaBar.style.display = "flex";
+          }
+        }
       }
       editor.value = payload.text || "";
       updateEditor();
@@ -276,36 +323,58 @@
       toast.classList.add("show");
       setTimeout(() => {
         toast.classList.remove("show");
-      }, 2500);
+      }, 2800);
     }
 
     function saveContent() {
       const updatedText = editor.value;
       const resultData = {
-        action: "save_init",
+        action: payload.target_type === "thought" ? "save_thought" : "save_init",
         target_type: payload.target_type,
         target_id: payload.target_id,
         text: updatedText
       };
 
-      if (tg) {
-        if (tg.HapticFeedback) {
+      if (tg && tg.HapticFeedback) {
+        try {
           tg.HapticFeedback.notificationOccurred("success");
-        }
-        showToast("✓ Сохранено! Отправка в бот...");
-        if (tg.sendData) {
-          setTimeout(() => {
-            tg.sendData(JSON.stringify(resultData));
-          }, 350);
-          return;
+        } catch (e) {}
+      }
+
+      let sent = false;
+      if (tg && typeof tg.sendData === "function") {
+        try {
+          tg.sendData(JSON.stringify(resultData));
+          sent = true;
+        } catch (err) {
+          console.warn("tg.sendData error (e.g. inline webview):", err);
+          sent = false;
         }
       }
-      showToast("✓ Изменения сохранены (предпросмотр)");
+
+      if (sent) {
+        showToast("✓ Сохранено! Отправка в бот...");
+        setTimeout(() => closeEditor(), 400);
+      } else {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(updatedText).then(() => {
+            showToast("✓ Скопировано в буфер! Отправьте текст в чат.");
+          }).catch(() => {
+            showToast("✓ Скопируйте текст и отправьте в чат.");
+          });
+        } else {
+          showToast("✓ Скопируйте текст и отправьте в чат.");
+        }
+      }
     }
 
     function closeEditor() {
       if (tg && tg.close) {
-        tg.close();
+        try {
+          tg.close();
+        } catch (e) {
+          window.close();
+        }
       } else {
         window.close();
       }
