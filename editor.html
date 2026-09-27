@@ -133,6 +133,30 @@
       background-color: var(--border);
       color: var(--text);
     }
+
+    .toast {
+      position: fixed;
+      bottom: 60px;
+      left: 50%;
+      transform: translateX(-50%) translateY(20px);
+      background: #1f2335;
+      color: #9ece6a;
+      border: 1px solid #414868;
+      border-radius: 20px;
+      padding: 8px 18px;
+      font-size: 13px;
+      font-weight: 500;
+      opacity: 0;
+      pointer-events: none;
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+      z-index: 1000;
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
   </style>
 </head>
 <body>
@@ -145,6 +169,8 @@
     <div class="line-numbers" id="lineNumbers">1</div>
     <textarea id="editor" spellcheck="false" placeholder="Введите текст..."></textarea>
   </div>
+
+  <div class="toast" id="toast"></div>
 
   <footer>
     <button class="btn-cancel" onclick="closeEditor()">Закрыть</button>
@@ -214,6 +240,17 @@
       lineNumbers.scrollTop = editor.scrollTop;
     });
 
+    function showToast(message, isError = false) {
+      const toast = document.getElementById("toast");
+      if (!toast) return;
+      toast.innerText = message;
+      toast.style.color = isError ? "#f7768e" : "#9ece6a";
+      toast.classList.add("show");
+      setTimeout(() => {
+        toast.classList.remove("show");
+      }, 2500);
+    }
+
     function saveContent() {
       const updatedText = editor.value;
       const resultData = {
@@ -223,11 +260,19 @@
         text: updatedText
       };
 
-      if (tg && tg.sendData) {
-        tg.sendData(JSON.stringify(resultData));
-      } else {
-        alert("Сохранено:" + updatedText);
+      if (tg) {
+        if (tg.HapticFeedback) {
+          tg.HapticFeedback.notificationOccurred("success");
+        }
+        showToast("✓ Сохранено! Отправка в бот...");
+        if (tg.sendData) {
+          setTimeout(() => {
+            tg.sendData(JSON.stringify(resultData));
+          }, 350);
+          return;
+        }
       }
+      showToast("✓ Изменения сохранены (предпросмотр)");
     }
 
     function closeEditor() {
