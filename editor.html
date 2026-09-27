@@ -186,6 +186,13 @@
         tg.MainButton.setText("💾 Сохранить");
         tg.MainButton.show();
         tg.MainButton.onClick(saveContent);
+        // Скрываем дублирующий HTML-футер в Telegram — используется нативный MainButton
+        const footer = document.querySelector("footer");
+        if (footer) footer.style.display = "none";
+      }
+      if (tg.BackButton) {
+        tg.BackButton.show();
+        tg.BackButton.onClick(closeEditor);
       }
     }
 
@@ -201,19 +208,40 @@
       text: ""
     };
 
-    function initFromHash() {
+    function initData() {
       try {
-        const hash = window.location.hash.substring(1);
-        if (hash) {
-          const params = new URLSearchParams(hash);
-          const rawData = params.get("data");
-          if (rawData) {
-            const decoded = decodeURIComponent(escape(atob(rawData)));
-            payload = JSON.parse(decoded);
+        let rawData = null;
+
+        // 1. Проверяем query string ?data=...
+        const searchParams = new URLSearchParams(window.location.search);
+        if (searchParams.has("data")) {
+          rawData = searchParams.get("data");
+        }
+
+        // 2. Фолбэк на hash #data=...
+        if (!rawData && window.location.hash) {
+          const hashStr = window.location.hash.substring(1);
+          const hashParams = new URLSearchParams(hashStr);
+          if (hashParams.has("data")) {
+            rawData = hashParams.get("data");
+          }
+        }
+
+        if (rawData) {
+          try {
+            payload = JSON.parse(decodeURIComponent(rawData));
+          } catch (e1) {
+            try {
+              const cleaned = rawData.replace(/ /g, "+");
+              const decoded = decodeURIComponent(escape(atob(cleaned)));
+              payload = JSON.parse(decoded);
+            } catch (e2) {
+              console.error("Failed to parse data payload:", e1, e2);
+            }
           }
         }
       } catch (e) {
-        console.error("Error parsing hash data:", e);
+        console.error("Error parsing init data:", e);
       }
 
       if (payload.title) {
@@ -283,7 +311,7 @@
       }
     }
 
-    window.addEventListener("DOMContentLoaded", initFromHash);
+    window.addEventListener("DOMContentLoaded", initData);
   </script>
 </body>
 </html>
