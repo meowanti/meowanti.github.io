@@ -79,6 +79,10 @@
       white-space: pre-line;
     }
 
+    .line-numbers div {
+      overflow: hidden;
+    }
+
     textarea {
       flex: 1;
       background: transparent;
@@ -90,10 +94,38 @@
       line-height: 20px;
       padding: 12px 14px;
       resize: none;
+      overflow-x: hidden;
       overflow-y: auto;
-      white-space: pre;
-      word-wrap: normal;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      overflow-wrap: break-word;
       tab-size: 2;
+    }
+
+    #lineMeasurer {
+      position: absolute;
+      visibility: hidden;
+      pointer-events: none;
+      top: -9999px;
+      left: -9999px;
+      margin: 0;
+      padding: 0;
+      border: none;
+      font-family: "JetBrains Mono", Consolas, Menlo, Monaco, monospace;
+      font-size: 14px;
+      line-height: 20px;
+      tab-size: 2;
+      box-sizing: content-box;
+    }
+
+    #lineMeasurer .m-line {
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      overflow-wrap: break-word;
+      margin: 0;
+      padding: 0;
+      min-height: 20px;
+      line-height: 20px;
     }
 
     textarea::selection {
@@ -174,6 +206,7 @@
     <div class="line-numbers" id="lineNumbers">1</div>
     <textarea id="editor" spellcheck="false" placeholder="Введите текст..."></textarea>
   </div>
+  <div id="lineMeasurer" aria-hidden="true"></div>
 
   <div class="toast" id="toast"></div>
 
@@ -210,6 +243,7 @@
     const lineNumbers = document.getElementById("lineNumbers");
     const stats = document.getElementById("stats");
     const docTitle = document.getElementById("docTitle");
+    const lineMeasurer = document.getElementById("lineMeasurer");
 
     let payload = {
       target_type: "unknown",
@@ -298,22 +332,58 @@
       updateEditor();
     }
 
+    function escapeHtml(str) {
+      return str
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+    }
+
     function updateEditor() {
       const text = editor.value;
-      const lines = text.split("\n").length;
-      
-      let numbers = "";
-      for (let i = 1; i <= lines; i++) {
-        numbers += i + "\n";
+      const lines = text.split("\n");
+      const lineCount = lines.length;
+      stats.innerText = lineCount + " строк, " + text.length + " симв.";
+
+      const style = window.getComputedStyle(editor);
+      const padLeft = parseFloat(style.paddingLeft) || 14;
+      const padRight = parseFloat(style.paddingRight) || 14;
+      const contentWidth = editor.clientWidth ? (editor.clientWidth - padLeft - padRight) : 0;
+
+      if (contentWidth > 0 && lineMeasurer) {
+        lineMeasurer.style.width = contentWidth + "px";
+
+        let measureHtml = "";
+        for (let i = 0; i < lineCount; i++) {
+          const escaped = escapeHtml(lines[i]);
+          measureHtml += `<div class="m-line">${escaped || "&#8203;"}</div>`;
+        }
+        lineMeasurer.innerHTML = measureHtml;
+
+        const children = lineMeasurer.children;
+        let numHtml = "";
+        for (let i = 0; i < lineCount; i++) {
+          const h = children[i].offsetHeight;
+          numHtml += `<div style="height:${h}px;line-height:20px;">${i + 1}</div>`;
+        }
+        lineNumbers.innerHTML = numHtml;
+      } else {
+        let numbers = "";
+        for (let i = 1; i <= lineCount; i++) {
+          numbers += i + "\n";
+        }
+        lineNumbers.innerText = numbers;
       }
-      lineNumbers.innerText = numbers;
-      stats.innerText = lines + " строк, " + text.length + " симв.";
     }
 
     editor.addEventListener("input", updateEditor);
     editor.addEventListener("scroll", () => {
       lineNumbers.scrollTop = editor.scrollTop;
     });
+    window.addEventListener("resize", updateEditor);
+    if (document.fonts && document.fonts.ready) {
+      document.fonts.ready.then(updateEditor);
+    }
 
     function showToast(message, isError = false) {
       const toast = document.getElementById("toast");
